@@ -62,13 +62,27 @@
 #define ELAPSED_NS(start,stop) \
   (((int64_t)stop.tv_sec-start.tv_sec)*1000*1000*1000+(stop.tv_nsec-start.tv_nsec))
 
-// Allow user to specify custom seed value
+// Allow compile-time customization of seed value
 #ifndef SEED
 #define SEED 1
 #elif SEED == -1
 #undef SEED
 #define SEED time(NULL)
 #endif
+
+// Allow compile-time customization of chunk size.  Chunk size must be
+// compatible with alignment requirements of target filesystems when using
+// O_DIRECT, which is always used if the target filesystem supports it.
+#ifndef CHUNK_SIZE
+#define CHUNK_SIZE  4096
+#endif
+
+// Allow compile-time customization of chunk count.
+#ifndef CHUNK_COUNT
+#define CHUNK_COUNT  2
+#endif
+
+#define BUFFER_SIZE (CHUNK_SIZE*CHUNK_COUNT)
 
 int main(int argc, char *argv[])
 {
@@ -77,7 +91,6 @@ int main(int argc, char *argv[])
   int oflags;
   int niters;
   size_t file_size;
-  size_t chunk_size = 4096;
   int file_chunks;
   int alignment;
   int iovs_idx;
@@ -96,11 +109,11 @@ int main(int argc, char *argv[])
   }
   filename = argv[1];
 
-  file_size = 512;
+  file_size = 512; // Default filesize (in GiB)
   if(argc > 2) {
     file_size = strtol(argv[2], NULL, 0);
   }
-  file_size *= GiB;
+  file_size *= GiB; // Convert from GiB to bytes
 
   niters = 1;
   if(argc > 3) {
@@ -116,9 +129,9 @@ int main(int argc, char *argv[])
   }
 
   // Number of chunks per file
-  file_chunks = file_size / chunk_size;
-  // Adjust file_size (in case file_size was non-multiple of chunk_size)
-  file_size = file_chunks * chunk_size;
+  file_chunks = file_size / CHUNK_SIZE;
+  // Adjust file_size (in case file_size was non-multiple of CHUNK_SIZE)
+  file_size = file_chunks * CHUNK_SIZE;
 
   // Use pathconf to find required/recommended I/O alignment, if any
   errno = 0;
@@ -135,20 +148,20 @@ int main(int argc, char *argv[])
   }
 
   // Allocate buffer with suitable alignment
-  if((errno=posix_memalign((void **)&buffer, alignment, 2*chunk_size))) {
+  if((errno=posix_memalign((void **)&buffer, alignment, BUFFER_SIZE))) {
     perror("posix_memalign");
     return 1;
   }
 
   // Lock buffer in place
-  if(mlock(buffer, 2*chunk_size)) {
+  if(mlock(buffer, BUFFER_SIZE)) {
     perror("mlock");
     return 1;
   }
 
   // Fill buffer with random data
   srandom(SEED);
-  for(i=0; i < 2*chunk_size; i++) {
+  for(i=0; i < BUFFER_SIZE; i++) {
     buffer[i] = random() % 0xff;
   }
 
@@ -160,8 +173,8 @@ int main(int argc, char *argv[])
   }
   // Populate iovec array
   for(i=0; i<=file_chunks; i++) {
-    iovs[i].iov_base = buffer + (i%2)*chunk_size;
-    iovs[i].iov_len = chunk_size;
+    iovs[i].iov_base = buffer + (i % CHUNK_COUNT) * CHUNK_SIZE;
+    iovs[i].iov_len = CHUNK_SIZE;
   }
 
   oflags = O_WRONLY | O_CREAT | O_DIRECT;
@@ -194,7 +207,7 @@ int main(int argc, char *argv[])
     // Write file.  The number of iovecs that can be written in one call to
     // writev is limited to IOV_MAX, so we have to loop through iovs in case
     // file_chunks is greater than IOV_MAX.
-    piov = &iovs[i%2];
+    piov = &iovs[i % CHUNK_COUNT];
     iovs_remaining = file_chunks;
     while(iovs_remaining > 0) {
       iovs_to_write = (iovs_remaining > IOV_MAX) ? IOV_MAX : iovs_remaining;
