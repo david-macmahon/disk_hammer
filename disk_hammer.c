@@ -83,8 +83,6 @@
 #define CHUNK_COUNT  2
 #endif
 
-#define BUFFER_SIZE (CHUNK_SIZE*CHUNK_COUNT)
-
 int main(int argc, char *argv[])
 {
   int i;
@@ -92,6 +90,7 @@ int main(int argc, char *argv[])
   int oflags;
   int niters;
   size_t file_size;
+  size_t buffer_size;
   uint64_t file_chunks;
   int alignment;
   int iovs_idx;
@@ -148,33 +147,40 @@ int main(int argc, char *argv[])
     printf("using alignment of %d bytes\n", alignment);
   }
 
+  // Validate alignment (must be less than or equal to CHUNK_SIZE)
+  if(alignment > CHUNK_SIZE) {
+    printf("error: alignment requirement is greater than chunk size\n");
+    return 1;
+  }
+
   // Allocate buffer with suitable alignment
-  if((errno=posix_memalign((void **)&buffer, alignment, BUFFER_SIZE))) {
+  buffer_size = ((size_t)CHUNK_SIZE) + (CHUNK_COUNT-1)*alignment;
+  if((errno=posix_memalign((void **)&buffer, alignment, buffer_size))) {
     perror("posix_memalign");
     return 1;
   }
 
   // Lock buffer in place
-  if(mlock(buffer, BUFFER_SIZE)) {
+  if(mlock(buffer, buffer_size)) {
     perror("mlock");
     return 1;
   }
 
   // Fill buffer with random data
   srandom(SEED);
-  for(i=0; i < BUFFER_SIZE; i++) {
+  for(i=0; i < buffer_size; i++) {
     buffer[i] = random() % 0xff;
   }
 
   // Allocate iovec array
-  iovs = malloc((file_chunks+1) * sizeof(*iovs));
+  iovs = malloc((file_chunks+(CHUNK_COUNT-1)) * sizeof(*iovs));
   if(!iovs) {
     perror("malloc[iovs]");
     return 1;
   }
   // Populate iovec array
-  for(i=0; i<=file_chunks; i++) {
-    iovs[i].iov_base = buffer + (i % CHUNK_COUNT) * CHUNK_SIZE;
+  for(i=0; i<file_chunks+(CHUNK_COUNT-1); i++) {
+    iovs[i].iov_base = buffer + (i % CHUNK_COUNT) * alignment;
     iovs[i].iov_len = CHUNK_SIZE;
   }
 
