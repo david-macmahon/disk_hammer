@@ -43,6 +43,7 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <time.h>
 #include <errno.h>
@@ -91,7 +92,7 @@ int main(int argc, char *argv[])
   int oflags;
   int niters;
   size_t file_size;
-  int file_chunks;
+  uint64_t file_chunks;
   int alignment;
   int iovs_idx;
   int iovs_remaining;
@@ -120,6 +121,11 @@ int main(int argc, char *argv[])
     niters = strtol(argv[3], NULL, 0);
   }
 
+  // Number of chunks per file
+  file_chunks = file_size / CHUNK_SIZE;
+  // Adjust file_size (in case file_size was non-multiple of CHUNK_SIZE)
+  file_size = file_chunks * CHUNK_SIZE;
+
   if(niters == 0) {
     printf("writing %ld bytes to '%s' infinite times\n",
         file_size, filename);
@@ -127,11 +133,6 @@ int main(int argc, char *argv[])
     printf("writing %ld bytes to '%s' %d times\n",
         file_size, filename, niters);
   }
-
-  // Number of chunks per file
-  file_chunks = file_size / CHUNK_SIZE;
-  // Adjust file_size (in case file_size was non-multiple of CHUNK_SIZE)
-  file_size = file_chunks * CHUNK_SIZE;
 
   // Use pathconf to find required/recommended I/O alignment, if any
   errno = 0;
