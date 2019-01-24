@@ -48,13 +48,14 @@
 #include <time.h>
 #include <errno.h>
 #include <limits.h>
+#include <getopt.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/uio.h>
 
-#define KiB (1024)
+#define KiB (1024UL)
 #define MiB (KiB*KiB)
 #define GiB (MiB*KiB)
 #define TiB (GiB*KiB)
@@ -71,22 +72,179 @@
 #define SEED time(NULL)
 #endif
 
-// Allow compile-time customization of chunk size.  Chunk size must be
+// Allow compile-time customization of default chunk size.  Chunk size must be
 // compatible with alignment requirements of target filesystems when using
 // O_DIRECT, which is always used if the target filesystem supports it.
-#ifndef CHUNK_SIZE
-#define CHUNK_SIZE  4096
+#ifndef DEFAULT_CHUNK_SIZE
+#define DEFAULT_CHUNK_SIZE 4096
 #endif
 
 // Allow compile-time customization of chunk count.
-#ifndef CHUNK_COUNT
-#define CHUNK_COUNT  2
+#ifndef DEFAULT_CHUNK_COUNT
+#define DEFAULT_CHUNK_COUNT 2
 #endif
+
+// Show help message
+void usage(const char *argv0) {
+    printf(
+      "Usage: %s [options] OUTFILE [LENGTH [ITERS]]\n"
+      "\n"
+      "Options:\n"
+      "  -h,      --help      .Show this message\n"
+      "  -s SIZE, --size=SIZE  Specifies chunk size in bytes [%lu]\n"
+      "  -c NUM,  --count=NUM  Number of unique chunks [%u]\n"
+      "  -n,      --dry-run    Dry run, no data written\n"
+      "  -v,      --verbose    Display more info\n"
+//    "  -V,   --version        Show version\n"
+      "\n"
+      "Defaults:\n"
+      "  LENGTH  512 MiB\n"
+      "  ITERS     1 iteration\n"
+      "  SIZE   4096 bytes\n"
+      "  NUM       2 unique chunks\n"
+      "\n"
+      "LEGNTH and SIZE can have suffix of k/m/g/t/p for KiB/MiB/GiB/TiB/PiB\n"
+      "Passing 0 for ITERS means loop forever\n"
+      ,argv0, (size_t)DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_COUNT
+    );
+}
+
+size_t strtosize(const char *s)
+{
+  char * suffix;
+  size_t size = strtoul(s, &suffix, 0);
+  switch(*suffix) {
+    case 'k':
+    case 'K':
+      size *= KiB;
+      break;
+    case 'm':
+    case 'M':
+      size *= MiB;
+      break;
+    case 'g':
+    case 'G':
+      size *= GiB;
+      break;
+    case 't':
+    case 'T':
+      size *= TiB;
+      break;
+    case 'p':
+    case 'P':
+      size *= PiB;
+      break;
+  }
+
+  return size;
+}
+
+// Enum for command line parsing status
+enum cmdline_status {
+  cmdline_ok,
+  cmdline_help,
+  cmdline_error
+};
+
+// Structure to hold parameters from command line options
+struct dh_opts {
+  size_t chunk_size;
+  uint32_t chunk_count;
+  int dry_run;
+  int verbose;
+};
+
+// Returns index of first non-option argv element (i.e. filename) or
+// 0 if help was requested or -1 if an error is encountered.  For return values
+// less than 1, the dh_opts structure pointed to by opts is not changed.
+int parse_command_line(int argc, char * argv[], struct dh_opts * opts)
+{
+  int opt;
+  enum cmdline_status cmdline_status = cmdline_ok;
+
+  // Working values that will update opts just before successful return
+  struct dh_opts tmp_opts = {
+    .chunk_size = DEFAULT_CHUNK_SIZE,
+    .chunk_count = DEFAULT_CHUNK_COUNT,
+    .dry_run = 0
+  };
+
+  static struct option long_opts[] = {
+    {"help",     0, NULL, 'h'},
+    {"size",     0, NULL, 's'},
+    {"count",    0, NULL, 'c'},
+    {"dry-run",  0, NULL, 'n'},
+    {"verbose",  0, NULL, 'v'},
+//  {"version",  0, NULL, 'V'},
+    {0,0,0,0}
+  };
+
+  while((opt=getopt_long(argc,argv,"hc:ns:v",long_opts,NULL))!=-1) {
+    switch (opt) {
+      case 'h':
+        usage(argv[0]);
+        cmdline_status = cmdline_help;
+        break;
+
+      case 'c':
+        tmp_opts.chunk_count = strtoul(optarg, NULL, 0);
+        if(tmp_opts.chunk_count == 0) {
+          fprintf(stderr, "chunk count cannot be zero\n");
+          cmdline_status = cmdline_error;
+        }
+        break;
+
+      case 'n':
+        tmp_opts.dry_run = 1;
+        break;
+
+      case 's':
+        tmp_opts.chunk_size = strtosize(optarg);
+        if(tmp_opts.chunk_count == 0) {
+          fprintf(stderr, "chunk size cannot be zero\n");
+          cmdline_status = cmdline_error;
+        }
+        break;
+
+      case 'v':
+        tmp_opts.verbose = 1;
+        break;
+
+      case '?': // Command line parsing error
+      default:
+        cmdline_status = cmdline_error;
+        break;
+    }
+
+    if(cmdline_status != cmdline_ok) {
+      break;
+    }
+  }
+
+  if(cmdline_status == cmdline_error) {
+    return -1;
+  } else if(cmdline_status == cmdline_help) {
+    return 0;
+  }
+
+  // If a filename was given, optind will be less than argc, otherwise it is an
+  // error.
+  if(optind >= argc) {
+    usage(argv[0]);
+    return -1;
+  }
+
+  // Success, update opts
+  *opts = tmp_opts;
+
+  return optind;
+}
 
 int main(int argc, char *argv[])
 {
   int i;
   int fd;
+  int argi;
   int oflags;
   int niters;
   size_t file_size;
@@ -102,34 +260,48 @@ int main(int argc, char *argv[])
   const char * filename;
   struct timespec start, stop;
   int64_t elapsed_ns;
+  struct dh_opts opts;
 
-  if(argc < 2) {
-    printf("usage: %s FILENAME [GiB [ITERS]]\n", argv[0]);
-    return 1;
-  }
-  filename = argv[1];
+  argi = parse_command_line(argc, argv, &opts);
 
-  file_size = 512; // Default filesize (in GiB)
-  if(argc > 2) {
-    file_size = strtol(argv[2], NULL, 0);
+  if(argi < 1) {
+    return -argi;
   }
-  file_size *= GiB; // Convert from GiB to bytes
+
+  filename = argv[argi];
+
+  file_size = 512 * MiB; // Default filesize 512 MiB
+  if(argc > argi+1) {
+    file_size = strtosize(argv[argi+1]);
+  }
 
   niters = 1;
-  if(argc > 3) {
-    niters = strtol(argv[3], NULL, 0);
+  if(argc > argi+2) {
+    niters = strtol(argv[argi+2], NULL, 0);
   }
 
   // Number of chunks per file
-  file_chunks = file_size / CHUNK_SIZE;
-  // Adjust file_size (in case file_size was non-multiple of CHUNK_SIZE)
-  file_size = file_chunks * CHUNK_SIZE;
+  file_chunks = file_size / opts.chunk_size;
+  // Adjust file_size (in case file_size was non-multiple of chunk size)
+  file_size = file_chunks * opts.chunk_size;
+
+  if(file_size == 0) {
+    printf("error: requested file size is smaller than chunk size\n");
+    return 1;
+  } else if(file_chunks < opts.chunk_count) {
+    printf("warning: requested file size smaller than all unique chunks\n");
+  }
+
+  if(opts.verbose) {
+    printf("using %u unique chunks of %lu bytes each\n",
+        opts.chunk_count, opts.chunk_size);
+  }
 
   if(niters == 0) {
-    printf("writing %ld bytes to '%s' infinite times\n",
+    printf("writing %ld bytes to %s infinite times\n",
         file_size, filename);
   } else {
-    printf("writing %ld bytes to '%s' %d times\n",
+    printf("writing %ld bytes to %s %d times\n",
         file_size, filename, niters);
   }
 
@@ -143,18 +315,18 @@ int main(int argc, char *argv[])
     // No requirement, default to 512
     alignment = 512;
     printf("using default alignment of 512 bytes\n");
-  } else {
+  } else if(opts.verbose) {
     printf("using alignment of %d bytes\n", alignment);
   }
 
-  // Validate alignment (must be less than or equal to CHUNK_SIZE)
-  if(alignment > CHUNK_SIZE) {
+  // Validate alignment (must be less than or equal to chunk size)
+  if(alignment > opts.chunk_size) {
     printf("error: alignment requirement is greater than chunk size\n");
     return 1;
   }
 
   // Allocate buffer with suitable alignment
-  buffer_size = ((size_t)CHUNK_SIZE) + (CHUNK_COUNT-1)*alignment;
+  buffer_size = opts.chunk_size + (opts.chunk_count-1)*alignment;
   if((errno=posix_memalign((void **)&buffer, alignment, buffer_size))) {
     perror("posix_memalign");
     return 1;
@@ -172,16 +344,23 @@ int main(int argc, char *argv[])
     buffer[i] = random() % 0xff;
   }
 
+  if(opts.dry_run) {
+    if(opts.verbose) {
+      printf("dry run requested, no data written\n");
+    }
+    return 0;
+  }
+
   // Allocate iovec array
-  iovs = malloc((file_chunks+(CHUNK_COUNT-1)) * sizeof(*iovs));
+  iovs = malloc((file_chunks+(opts.chunk_count-1)) * sizeof(*iovs));
   if(!iovs) {
     perror("malloc[iovs]");
     return 1;
   }
   // Populate iovec array
-  for(i=0; i<file_chunks+(CHUNK_COUNT-1); i++) {
-    iovs[i].iov_base = buffer + (i % CHUNK_COUNT) * alignment;
-    iovs[i].iov_len = CHUNK_SIZE;
+  for(i=0; i<file_chunks+(opts.chunk_count-1); i++) {
+    iovs[i].iov_base = buffer + (i % opts.chunk_count) * alignment;
+    iovs[i].iov_len = opts.chunk_size;
   }
 
   oflags = O_WRONLY | O_CREAT | O_DIRECT;
@@ -214,7 +393,7 @@ int main(int argc, char *argv[])
     // Write file.  The number of iovecs that can be written in one call to
     // writev is limited to IOV_MAX, so we have to loop through iovs in case
     // file_chunks is greater than IOV_MAX.
-    piov = &iovs[i % CHUNK_COUNT];
+    piov = &iovs[i % opts.chunk_count];
     iovs_remaining = file_chunks;
     while(iovs_remaining > 0) {
       iovs_to_write = (iovs_remaining > IOV_MAX) ? IOV_MAX : iovs_remaining;
