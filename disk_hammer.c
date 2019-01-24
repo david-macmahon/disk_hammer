@@ -56,6 +56,10 @@
 #include <sys/mman.h>
 #include <sys/uio.h>
 
+#if HAVE_ZLIB
+#include <zlib.h>
+#endif
+
 #define KiB (1024UL)
 #define MiB (KiB*KiB)
 #define GiB (MiB*KiB)
@@ -241,6 +245,70 @@ int parse_command_line(int argc, char * argv[], struct dh_opts * opts)
   return optind;
 }
 
+#if HAVE_ZLIB
+//When the fairly ubiquitous zlib library is available, the verbose option will
+//also display a 32 bit CRC value of each unique chunk.  The value displayed is
+//the same value that would be given by the ubiquitous `cksum` utility (part of
+//the `coreutils` package on Ubuntu).  This allows for spot checking the
+//integrity of aritrary chunks from the output file.
+//
+// The `zlib` library has a CRC-32 function that uses the same generator
+// polynomial as the `cksum` utility's internal CRC-32 code, but the
+// implementations treat the bit in each byte of intput data in reverse order.
+// To get results from `zlib` that match `cksum`, each byte must be
+// bit-reversed before being passed to `crc32()` and the 32-bit output must
+// also be bit reversed!  Additionally, the `cksum` utility appends the length
+// of the data to the byte sequence, LSB first and omitting any trailing zero
+// bytes.  A great resource for understanding the plethora of CRC variants is
+// this document: http://zlib.net/crc_v3.txt
+//
+// This `zlib_cksum()` function takes the above into account and uses a
+// combination of data massaging and zlib's `crc32()` function to return a CRC
+// value that equals the CRC value output by the `cksum` utility given the same
+// input data.
+uint32_t zlib_cksum(uint32_t cksum, char * buf, size_t len)
+{
+// Macro to bit reverse a byte
+#define BITREV8(b) \
+  ( \
+    (((b) & 0x01) << 7) | (((b) & 0x02) << 5) | \
+    (((b) & 0x04) << 3) | (((b) & 0x08) << 1) | \
+    (((b) & 0x10) >> 1) | (((b) & 0x20) >> 3) | \
+    (((b) & 0x40) >> 5) | (((b) & 0x80) >> 7)   \
+  )
+
+// Macro to bit reverse a 32-bit word
+#define BITREV32(w) \
+  ( \
+    (BITREV8((w)       & 0xff) << 24) | \
+    (BITREV8((w) >>  8 & 0xff) << 16) | \
+    (BITREV8((w) >> 16 & 0xff) <<  8) | \
+    (BITREV8((w) >> 24 & 0xff)      )   \
+  )
+
+  size_t i;
+  char c;
+
+  // Bit reverse cksum on input
+  cksum = BITREV32(cksum);
+
+  // Feed bit reversed data bytes to zlib's crc32
+  for(i=0; i<len; i++) {
+    c = BITREV8(buf[i]);
+    cksum = crc32(cksum, &c, 1);
+  }
+  // Feed bit reversed len bytes to zlib's crc32
+  // LSB first, omit trailing zero bytes
+  for(; len; len >>= 8) {
+    c = BITREV8(len & 0xff);
+    cksum = crc32(cksum, &c, 1);
+  }
+
+  // Bit reverse cksum on output
+  return BITREV32(cksum);
+}
+#endif  // HAVE_ZLIB
+
 int main(int argc, char *argv[])
 {
   int i;
@@ -263,6 +331,9 @@ int main(int argc, char *argv[])
   struct timespec start, stop;
   int64_t elapsed_ns;
   struct dh_opts opts;
+#if HAVE_ZLIB
+  uint32_t cksum;
+#endif
 
   argi = parse_command_line(argc, argv, &opts);
 
@@ -360,6 +431,15 @@ int main(int argc, char *argv[])
   for(i=0; i < buffer_size; i++) {
     buffer[i] = random() % 0xff;
   }
+
+#if HAVE_ZLIB
+  if(opts.verbose) {
+    for(i=0; i<opts.chunk_count; i++) {
+      cksum = zlib_cksum(-1, buffer + i*alignment, opts.chunk_size);
+      printf("chunk %d cksum %08x %10u\n", i, cksum, cksum);
+    }
+  }
+#endif
 
   if(opts.dry_run) {
     if(opts.verbose) {
