@@ -331,6 +331,8 @@ int main(int argc, char *argv[])
   struct timespec start, stop;
   int64_t elapsed_ns;
   struct dh_opts opts;
+  time_t now;
+  char strnow[sizeof("YYYY-dd-mm HH:MM:SS UTC") + 1];
 #if HAVE_ZLIB
   uint32_t cksum;
 #endif
@@ -520,8 +522,10 @@ int main(int argc, char *argv[])
 
     // Output timing stats
     // TODO Limit/aggregate stats reports if elapsed time is short?
-    printf("wrote %lu bytes in %lu ns (%.3f Gbps)\n",
-        file_size, elapsed_ns, (8.0 * file_size)/elapsed_ns);
+    time(&now);
+    strftime(strnow, sizeof(strnow), "%Y-%m-%d %H:%M:%S UTC", gmtime(&now));
+    printf("%s wrote %lu bytes in %lu ns (%.3f Gbps)\n",
+        strnow, file_size, elapsed_ns, (8.0 * file_size)/elapsed_ns);
     // Flush stdout so that output redirected to a log file can be tailed
     fflush(stdout);
   }
