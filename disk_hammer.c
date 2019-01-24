@@ -45,6 +45,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <string.h>
 #include <time.h>
 #include <errno.h>
 #include <limits.h>
@@ -257,7 +258,8 @@ int main(int argc, char *argv[])
   char * buffer;
   struct iovec * iovs;
   struct iovec * piov;
-  const char * filename;
+  char * filename;
+  char * slash;
   struct timespec start, stop;
   int64_t elapsed_ns;
   struct dh_opts opts;
@@ -312,9 +314,24 @@ int main(int argc, char *argv[])
     perror("pathconf");
     return 1;
   } else if(alignment == -1) {
-    // No requirement, default to 512
-    alignment = 512;
-    printf("using default alignment of 512 bytes\n");
+    // Maybe file doesn't exist, check alignemnt for directory containing file
+    if((slash=strrchr(filename, '/'))) {
+      // NUL terminate at slash, try again, then restore slash
+      *slash = '\0';
+      alignment = pathconf(filename, _PC_REC_XFER_ALIGN);
+      *slash = '/';
+    } else {
+      // Use current directory
+      alignment = pathconf(".", _PC_REC_XFER_ALIGN);
+    }
+  }
+  // Check the possiibly retried alignment for valid value
+  if(alignment == -1) {
+    // No requirement, default to 4096
+    alignment = 4096;
+    if(opts.verbose) {
+      printf("using default alignment of %d bytes\n", alignment);
+    }
   } else if(opts.verbose) {
     printf("using alignment of %d bytes\n", alignment);
   }
