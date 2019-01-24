@@ -461,6 +461,7 @@ int main(int argc, char *argv[])
   }
 
   oflags = O_WRONLY | O_CREAT | O_DIRECT;
+  fflush(stdout);
 
   // Main loop
   for(i=0; i < niters || niters == 0; i++) {
@@ -521,6 +522,8 @@ int main(int argc, char *argv[])
     // TODO Limit/aggregate stats reports if elapsed time is short?
     printf("wrote %lu bytes in %lu ns (%.3f Gbps)\n",
         file_size, elapsed_ns, (8.0 * file_size)/elapsed_ns);
+    // Flush stdout so that output redirected to a log file can be tailed
+    fflush(stdout);
   }
 
   return 0;
