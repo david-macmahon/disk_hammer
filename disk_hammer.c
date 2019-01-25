@@ -321,8 +321,10 @@ int main(int argc, char *argv[])
   uint64_t file_chunks;
   int alignment;
   int iovs_idx;
-  int iovs_remaining;
-  int iovs_to_write;
+  uint64_t iovs_remaining;
+  uint64_t iovs_to_write;
+  ssize_t bytes_written;
+  ssize_t bytes_written_partial;
   char * buffer;
   struct iovec * iovs;
   struct iovec * piov;
@@ -490,22 +492,60 @@ int main(int argc, char *argv[])
       }
     }
 
-    // Write file.  The number of iovecs that can be written in one call to
-    // writev is limited to IOV_MAX, so we have to loop through iovs in case
-    // file_chunks is greater than IOV_MAX.
+    // Write file...
+
     piov = &iovs[i % opts.chunk_count];
     iovs_remaining = file_chunks;
     while(iovs_remaining > 0) {
+      // The number of iovecs that can be written in one call to writev is
+      // limited to IOV_MAX.
       iovs_to_write = (iovs_remaining > IOV_MAX) ? IOV_MAX : iovs_remaining;
-      // TODO Handle incomplete writes (which are allowed)
-      if(writev(fd, piov, iovs_to_write) == -1) {
+
+      // Furthermore, the total number of bytes written must not exceed
+      // SSIZE_MAX, the maximum value of ssize_t (signed size_t).  This means
+      // we have to loop through iovs in case file_chunks is greater than
+      // IOV_MAX or if IOVMAX (or fewer) iovs will exceed SSIZE_MAX.
+      if(iovs_to_write * opts.chunk_size > (size_t)SSIZE_MAX) {
+        iovs_to_write = (size_t)SSIZE_MAX / opts.chunk_size;
+      }
+
+      // Write data
+      if((bytes_written = writev(fd, piov, iovs_to_write)) == -1) {
+        // Error
         perror("writev");
-        fprintf(stderr, "iter %d iovs_remaining %d iovs_to_write %d\n",
+        fprintf(stderr, "iter %d iovs_remaining %ld iovs_to_write %ld\n",
             i, iovs_remaining, iovs_to_write);
         fprintf(stderr, "piov %p iov_base %p iov_len %lu\n",
             piov, piov->iov_base, piov->iov_len);
         return 1;
+      } else if(bytes_written < iovs_to_write * opts.chunk_size) {
+        // Incomplete write
+        // Set iovs_to_write to the number of complete iovs written.
+        iovs_to_write = bytes_written / opts.chunk_size;
+        // Set bytes_written_partial to number of bytes written from next iov
+        bytes_written_partial = bytes_written % opts.chunk_size;
+        // If any bytes were written from the next iov
+        if(bytes_written_partial > 0) {
+          // Increment iov pointer, decrement iov length
+          piov[iovs_to_write].iov_base += bytes_written_partial;
+          piov[iovs_to_write].iov_len  -= bytes_written_partial;
+          // Write remainder of partially written iov
+          if((bytes_written = writev(fd, &piov[iovs_to_write], 1)) == -1) {
+            // Error
+            perror("writev[partal]");
+            return 1;
+          } else if(bytes_written < bytes_written_partial) {
+            printf("error: double incomplete writes not supported\n");
+            return 1;
+          }
+          // Increment iov pointer, decrement iov length
+          piov[iovs_to_write].iov_base -= bytes_written_partial;
+          piov[iovs_to_write].iov_len  += bytes_written_partial;
+          iovs_to_write++;
+        }
       }
+
+      // Increment iovs pointer and iovs remaining basond on iovs_to_write
       piov += iovs_to_write;
       iovs_remaining -= iovs_to_write;
     }
