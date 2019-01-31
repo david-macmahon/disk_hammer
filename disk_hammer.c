@@ -101,6 +101,7 @@
 #include <time.h>
 #include <errno.h>
 #include <limits.h>
+#include <signal.h>
 #include <getopt.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -297,6 +298,24 @@ int parse_command_line(int argc, char * argv[], struct dh_opts * opts)
   return optind;
 }
 
+static int run = 1;
+
+void signal_handler(int signal)
+{
+  struct sigaction sigact = {
+    .sa_handler = SIG_DFL
+  };
+
+  if(signal == SIGINT) {
+    printf("...exiting after current iteration...\n");
+    fflush(stdout);
+    run = 0;
+    // Restore default signal handler so that another SIGINT will interrupt
+    // immediately.
+    sigaction(SIGINT, &sigact, NULL);
+  }
+}
+
 #if HAVE_ZLIB
 //When the fairly ubiquitous zlib library is available, the verbose option will
 //also display a 32 bit CRC value of each unique chunk.  The value displayed is
@@ -387,6 +406,9 @@ int main(int argc, char *argv[])
   struct dh_opts opts;
   time_t now;
   char strnow[sizeof("YYYY-dd-mm HH:MM:SS UTC") + 1];
+  struct sigaction sigact = {
+    .sa_handler = signal_handler
+  };
 #if HAVE_ZLIB
   uint32_t cksum;
 #endif
@@ -519,8 +541,13 @@ int main(int argc, char *argv[])
   oflags = O_WRONLY | O_CREAT | O_DIRECT;
   fflush(stdout);
 
+  // Install signal handler for SIGINT (ctrl-C).  The SIGINT handler will exit
+  // after current iteration.  It also restores the default SIGINT handler, so
+  // a second SIGINT signal will interrupt the program immediately.
+  sigaction(SIGINT, &sigact, NULL);
+
   // Main loop
-  for(i=0; i < niters || niters == 0; i++) {
+  for(i=0; run && (i < niters || niters == 0); i++) {
     // Get start time
     clock_gettime(CLOCK_MONOTONIC, &start);
 
