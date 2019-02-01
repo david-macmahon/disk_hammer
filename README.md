@@ -80,22 +80,24 @@ This can be used to verify that the output file contains the expected data.
 
 # Examples
 
+Here are some examples:
+
   1. Verbosely create 8K test file containing 2 unique 4K chunks
 
-      $ disk_hammer -v -s 4k testfile 8k
-      using 2 unique chunks of 4096 bytes each
-      writing 8192 bytes to testfile 1 times
-      using alignment of 4096 bytes
-      chunk 0 cksum 55cbd682 1439422082
-      chunk 1 cksum f3221a34 4079098420
-      2019-01-28 07:49:40 UTC wrote 8192 bytes in 272338 ns (0.241 Gbps)
+    $ disk_hammer -v -s 4k testfile 8k
+    using 2 unique chunks of 4096 bytes each
+    writing 8192 bytes to testfile 1 times
+    using alignment of 4096 bytes
+    chunk 0 cksum 55cbd682 1439422082
+    chunk 1 cksum f3221a34 4079098420
+    2019-01-28 07:49:40 UTC wrote 8192 bytes in 272338 ns (0.241 Gbps)
 
   2. Show that cksum of first chunk matches 1439422082
 
-      $ dd if=testfile bs=4096 count=1 2>/dev/null | cksum
-      1439422082 4096
+    $ dd if=testfile bs=4096 count=1 2>/dev/null | cksum
+    1439422082 4096
 
   3. Show that cksum of second chunk matches 4079098420
 
-      $ dd if=testfile bs=4096 count=1 skip=1 2>/dev/null | cksum
-      4079098420 4096
+    $ dd if=testfile bs=4096 count=1 skip=1 2>/dev/null | cksum
+    4079098420 4096
