@@ -1,3 +1,6 @@
+prefix=/usr/local
+bindir=$(prefix)/bin
+
 CC = gcc
 
 ifndef nozlib
@@ -16,6 +19,9 @@ disk_hammer: disk_hammer.o
 disk_hammer.o: disk_hammer.c
 	$(CC) $(ZLIB_FLAGS) $(CFLAGS) -c -o $@ $<
 
+install: disk_hammer
+	cp $< $(bindir)/.
+
 tags:
 	ctags -R
 
@@ -24,4 +30,4 @@ clean:
 	rm -f disk_hammer.o
 	rm -f tags
 
-.PHONY: tags clean all
+.PHONY: tags clean all install

@@ -12,6 +12,28 @@ The purposes of this program are:
   2. Determine the endurance of flash devices by writing to them until
      death.
 
+# Building and installing
+
+Building `disk_hammer` can be done by simply running `make`.
+
+Installing `disk_hammer` can be done by running:
+
+    make install
+    
+The default install directory is `/usr/local/bin` so root privileges are likely
+required to perform this step.  Installing to another location can be
+accomplished by running:
+
+    make install prefix=/some/path
+    
+which will install `disk_hammer` to `/some/path/bin`.
+
+Alternatively:
+
+    make install bindir=/some/path
+
+will install `disk_hammer` to `/some/path`.
+
 # Theory of operation
 
 The program works by:
@@ -29,8 +51,8 @@ The program works by:
 
 The size of the buffer is specified by the command line options -s/--size
 and -c/--count.  The --count option specified the number of "chunks"
-comprising the buffer. The --size option specifies the sise of each chunk.
-The buffer will be allocated such that it satifies the alignment
+comprising the buffer. The --size option specifies the size of each chunk.
+The buffer will be allocated such that it satisfies the alignment
 recommendations from pathconf() for the given filename (or its containing
 directory if it doesn't exist).  The chunk size must be an integer multiple
 of this alignment size.  A typical alignment size is 4096 bytes and that is
@@ -48,7 +70,7 @@ limited set of unique chunks from the buffer will be used to fill the output
 file, so chunks are not unique within a file unless the file contains only
 COUNT chunks.
 
-The array of iovec structures is actualy (COUNT-1) elements longer than
+The array of iovec structures is actually (COUNT-1) elements longer than
 needed so that the desired file length can be obtained by starting with any
 of the first COUNT elements of the array.  This is used to ensure that the
 file contents are different with each iteration of the write loop.  The
@@ -57,7 +79,7 @@ the first iovec element).  The second iteration starts the output file with
 the second chunk, and so on for the first COUNT iterations.  That pattern
 repeats until the requested number of iterations have been completed.
 
-The pseduo-random number generator is seeded with SEED, which is defined at
+The pseudo-random number generator is seeded with SEED, which is defined at
 compile time.  The default value for SEED is 1 (the same as the random()
 function on Linux, if not POSIX).  This means that the byte sequences
 written should the same each time the program is invoked.  If a different
