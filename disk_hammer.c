@@ -487,7 +487,8 @@ int main(int argc, char *argv[])
 
   // Validate alignment (must be less than or equal to chunk size)
   if(alignment > opts.chunk_size) {
-    printf("error: alignment requirement is greater than chunk size\n");
+    printf("error: alignment requirement %d is greater than chunk size %lu\n",
+        alignment, opts.chunk_size);
     return 1;
   }
 
